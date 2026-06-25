@@ -1,0 +1,7 @@
+interface:
+  display_name: "Build MCP Server"
+  short_description: "Design and scaffold MCP servers for Claude"
+  default_prompt: "Use $build-mcp-server to design and build an MCP server."
+
+policy:
+  allow_implicit_invocation: true

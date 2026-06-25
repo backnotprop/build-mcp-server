@@ -1,0 +1,11 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "MCP Development",
+      "description": "Skills for designing and building Model Context Protocol servers.",
+      "skills": ["build-mcp-server"]
+    }
+  ]
+}
