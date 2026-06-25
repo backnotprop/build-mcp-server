@@ -1,129 +1,159 @@
-# Elicitation — spec-native user input
+# Elicitation — user input during an MCP request
 
-Elicitation lets a server pause mid-tool-call and ask the user for structured input. The client renders a native form (no iframe, no HTML). User fills it, server continues.
+Elicitation lets an MCP server ask the user for input through the MCP host while
+a request is in progress. Use it only when the server genuinely needs more user
+input to complete the current operation.
 
-**This is the right answer for simple input.** Widgets (`build-mcp-app`) are for when you need rich UI — charts, searchable lists, visual previews. If you just need a confirmation, a picked option, or a few form fields, elicitation is simpler, spec-native, and works in any compliant host.
+There are two modes:
+
+- **Form mode**: in-band structured input for non-sensitive data.
+- **URL mode**: sends the user to a URL for sensitive or out-of-band flows.
+
+Always check client capabilities before sending an elicitation request. Hosts
+may support form mode, URL mode, both, or neither.
 
 ---
 
-## ⚠️ Check capability first — support is new
+## Form mode
 
-Host support is very recent:
+Use form mode for simple non-sensitive input:
 
-| Host | Status |
-|---|---|
-| Claude Code | ✅ since v2.1.76 (both `form` and `url` modes) |
-| Claude Desktop | Unconfirmed — likely not yet or very recent |
-| claude.ai | Unknown |
+- confirmation
+- enum choice
+- short text
+- date/date-time
+- simple flat form
 
-**The SDK throws `CapabilityNotSupported` if the client doesn't advertise elicitation.** There is no graceful degradation built in. You MUST check and have a fallback.
+Form-mode schemas are deliberately limited:
 
-### The canonical pattern
+- flat objects only
+- primitive properties only
+- no nested objects
+- no arrays of objects
+- supported string formats include `email`, `uri`, `date`, and `date-time`
+- use `title` and `description` for form labels/help text
+
+Example shape:
 
 ```typescript
-server.registerTool("delete_all", {
-  description: "Delete all items after confirmation",
-  inputSchema: {},
-}, async ({}, extra) => {
-  const caps = server.getClientCapabilities();
-  if (caps?.elicitation) {
-    const r = await server.elicitInput({
-      mode: "form",
-      message: "Delete all items? This cannot be undone.",
-      requestedSchema: {
-        type: "object",
-        properties: { confirm: { type: "boolean", title: "Confirm deletion" } },
-        required: ["confirm"],
-      },
-    });
-    if (r.action === "accept" && r.content?.confirm) {
-      await deleteAll();
-      return { content: [{ type: "text", text: "Deleted." }] };
-    }
-    return { content: [{ type: "text", text: "Cancelled." }] };
-  }
-  // Fallback: return text asking Claude to relay the question
-  return { content: [{ type: "text", text: "Confirmation required. Please ask the user: 'Delete all items? This cannot be undone.' Then call this tool again with their answer." }] };
+const caps = getClientCapabilitiesSomehow();
+if (!caps?.elicitation?.form && !caps?.elicitation) {
+  return {
+    isError: true,
+    content: [{ type: "text", text: "This operation requires user confirmation, but this MCP client does not support elicitation." }],
+  };
+}
+
+const result = await elicitInputSomehow({
+  mode: "form",
+  message: "Delete this item? This cannot be undone.",
+  requestedSchema: {
+    type: "object",
+    properties: {
+      confirm: { type: "boolean", title: "Confirm deletion" },
+    },
+    required: ["confirm"],
+  },
+});
+
+if (result.action !== "accept" || result.content?.confirm !== true) {
+  return { content: [{ type: "text", text: "Cancelled." }] };
+}
+
+await deleteItem();
+return { content: [{ type: "text", text: "Deleted." }] };
+```
+
+The exact SDK API is version-specific. Current SDK v2 uses request-context APIs
+such as `ctx.mcpReq.elicitInput(...)`; older SDK examples may use different
+names. Do not copy an elicitation snippet across SDK versions without checking
+the installed SDK docs.
+
+---
+
+## URL mode
+
+Use URL mode for sensitive or out-of-band flows:
+
+- API key entry
+- OAuth with an upstream service
+- payment details
+- credentials
+- account connection pages
+
+Form mode must not request passwords, API keys, access tokens, payment
+credentials, or similar secrets.
+
+URL mode returns a URL for the user to open. The MCP client should not receive
+the sensitive data. The server handles the web flow on its own trusted domain.
+
+Important security rule: bind the URL-mode elicitation to the MCP user identity.
+When the user opens the URL, verify the browser/session user is the same user
+who triggered the MCP request before accepting credentials or completing the
+flow.
+
+Example shape:
+
+```typescript
+const caps = getClientCapabilitiesSomehow();
+if (!caps?.elicitation?.url) {
+  return {
+    isError: true,
+    content: [{ type: "text", text: "This operation requires opening a secure setup URL, but this MCP client does not support URL elicitation." }],
+  };
+}
+
+const elicitationId = crypto.randomUUID();
+await storePendingElicitation({
+  elicitationId,
+  mcpUserId,
+  purpose: "connect_upstream_api",
+  expiresAt: Date.now() + 10 * 60_000,
+});
+
+await elicitInputSomehow({
+  mode: "url",
+  message: "Connect your upstream account.",
+  elicitationId,
+  url: `https://mcp.example.com/connect?elicitationId=${elicitationId}`,
 });
 ```
 
-```python
-# fastmcp
-from fastmcp import Context
-from fastmcp.exceptions import CapabilityNotSupported
+The connect page must:
 
-@mcp.tool
-async def delete_all(ctx: Context) -> str:
-    try:
-        result = await ctx.elicit("Delete all items? This cannot be undone.", response_type=bool)
-        if result.action == "accept" and result.data:
-            await do_delete()
-            return "Deleted."
-        return "Cancelled."
-    except CapabilityNotSupported:
-        return "Confirmation required. Ask the user to confirm deletion, then retry."
-```
+1. authenticate the browser user
+2. load the pending elicitation by `elicitationId`
+3. verify it belongs to that same MCP user
+4. collect credentials or complete OAuth
+5. store resulting upstream credentials server-side
+6. never send the secret back through MCP content
 
 ---
 
-## Schema constraints
+## Response actions
 
-Elicitation schemas are deliberately limited — keep forms simple:
+Elicitation responses use three actions:
 
-- **Flat objects only** — no nesting, no arrays of objects
-- **Primitives only** — `string`, `number`, `integer`, `boolean`, `enum`
-- String formats limited to: `email`, `uri`, `date`, `date-time`
-- Use `title` and `description` on each property — they become form labels
+| Action | Meaning |
+|---|---|
+| `accept` | User submitted the form or completed the requested action |
+| `decline` | User explicitly declined |
+| `cancel` | User dismissed or abandoned the request |
 
-If your data doesn't fit these constraints, that's the signal to escalate to a widget.
-
----
-
-## Three-state response
-
-| Action | Meaning | `content` present? |
-|---|---|---|
-| `accept` | User submitted the form | ✅ validated against your schema |
-| `decline` | User explicitly said no | ❌ |
-| `cancel` | User dismissed (escape, clicked away) | ❌ |
-
-Treat `decline` and `cancel` differently if it matters — `decline` is intentional, `cancel` might be accidental.
-
-The TS SDK's `server.elicitInput()` auto-validates `accept` responses against your schema via Ajv. fastmcp's `ctx.elicit()` returns a typed discriminated union (`AcceptedElicitation[T] | DeclinedElicitation | CancelledElicitation`).
+Treat `decline` and `cancel` differently when it matters. `decline` is an
+intentional answer; `cancel` may be accidental.
 
 ---
 
-## fastmcp response_type shorthand
+## When not to use elicitation
 
-```python
-await ctx.elicit("Pick a color", response_type=["red", "green", "blue"])  # enum
-await ctx.elicit("Enter email", response_type=str)                         # string
-await ctx.elicit("Confirm?", response_type=bool)                           # boolean
+Do not use elicitation for:
 
-@dataclass
-class ContactInfo:
-    name: str
-    email: str
-await ctx.elicit("Contact details", response_type=ContactInfo)             # flat dataclass
-```
+- ordinary required tool arguments that can be part of `inputSchema`
+- rich custom interfaces
+- long multi-step workflows
+- background account setup that can happen before tool calls
+- secrets in form mode
 
-Accepts: primitives, `list[str]` (becomes enum), dataclass, TypedDict, Pydantic BaseModel. All must be flat.
-
----
-
-## Security
-
-**MUST NOT request passwords, API keys, or tokens via elicitation** — spec requirement. Those go through OAuth or `user_config` with `sensitive: true` (MCPB), not runtime forms.
-
----
-
-## When to escalate to widgets
-
-Elicitation handles: confirm dialogs, enum pickers, short flat forms.
-
-Reach for `build-mcp-app` widgets when you need:
-- Nested or complex data structures
-- Scrollable/searchable lists (100+ items)
-- Visual preview before choosing (image thumbnails, file tree)
-- Live-updating progress or streaming content
-- Custom layouts, charts, maps
+If the data is required every time, make it a tool argument. If it is account
+configuration, prefer OAuth, a settings page, or URL-mode elicitation.

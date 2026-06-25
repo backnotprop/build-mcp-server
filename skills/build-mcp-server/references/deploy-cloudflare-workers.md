@@ -95,7 +95,8 @@ npx wrangler dev     # → http://localhost:8787/mcp
 npx wrangler deploy  # → https://my-mcp-server.<account>.workers.dev/mcp
 ```
 
-`wrangler deploy` prints the live URL. That's the URL users paste into Claude.
+`wrangler deploy` prints the live URL. That's the URL MCP clients/hosts use for
+the remote server.
 
 Secrets (upstream API keys): `npx wrangler secret put UPSTREAM_API_KEY`, then read `env.UPSTREAM_API_KEY` inside `init()`.
 

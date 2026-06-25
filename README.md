@@ -1,6 +1,8 @@
 # build-mcp-server
 
-A portable Agent Skill for designing and building Model Context Protocol servers that work with Claude. The skill guides agents through use-case discovery, deployment-model selection, tool design, auth choices, scaffolding, testing, and publication.
+A portable Agent Skill for designing and building Model Context Protocol servers.
+The skill guides agents through use-case discovery, deployment-model selection,
+tool/resource/prompt design, auth choices, scaffolding, testing, and deployment.
 
 This repo contains one skill: `build-mcp-server`.
 

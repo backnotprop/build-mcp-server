@@ -1,57 +1,58 @@
-# Tool Design — Writing Tools Claude Uses Correctly
+# Tool Design — Writing Tools Hosts Use Correctly
 
-Tool schemas and descriptions are prompt engineering. They land directly in Claude's context and determine whether Claude picks the right tool with the right arguments. Most MCP integration bugs trace back to vague descriptions or loose schemas.
+Tool schemas and descriptions are part of the MCP contract. They are visible to
+models and hosts, so vague descriptions or loose schemas become runtime bugs.
 
-## Anthropic Directory hard requirements
+## Baseline rules
 
-If this server will be submitted to the Anthropic Directory, the following are pass/fail review criteria (full list: https://claude.com/docs/connectors/building/review-criteria):
+- Give every tool a stable, short, snake_case name.
+- Add a human-readable `title`.
+- Add a precise `description`.
+- Use the narrowest practical `inputSchema`.
+- Reject invalid input at the MCP seam.
+- Split read and write operations into separate tools.
+- Mark read tools with `readOnlyHint: true`.
+- Mark destructive or overwrite/delete tools with `destructiveHint: true`.
+- Mark retry-safe write tools with `idempotentHint: true` only when that is
+  actually true.
+- Do not use tool descriptions to override system instructions or tell the model
+  how to behave globally.
 
-- Every tool **must** include `readOnlyHint`, `destructiveHint`, and `title` annotations — these determine auto-permissions in Claude.
-- Tool names **must** be ≤64 characters.
-- Read and write operations **must** be in separate tools. A single tool accepting both GET and POST/PUT/PATCH/DELETE is rejected — documenting safe vs unsafe within one tool's description does not satisfy this.
-- Tool descriptions **must not** instruct Claude how to behave (e.g. "always do X", "you must call Y first", overriding system instructions, promoting products) — treated as prompt injection at review.
-- Tools that accept freeform API endpoints/params **must** reference the target API's documentation in their description.
+Annotations are hints for clients and user interfaces, not access control. Server
+authorization must still enforce the real policy.
 
 ---
 
 ## Descriptions
 
-**The description is the contract.** It's the only thing Claude reads before deciding whether to call the tool. Write it like a one-line manpage entry plus disambiguating hints.
+Write descriptions like one-line manpage entries plus disambiguating details.
 
-### Good
+Good:
 
+```text
+search_issues — Search issues by keyword across title and body. Returns up to
+limit results ranked by recency. Does not search comments or pull requests.
 ```
-search_issues — Search issues by keyword across title and body. Returns up
-to `limit` results ranked by recency. Does NOT search comments or PRs —
-use search_comments / search_prs for those.
-```
 
-- Says what it does
-- Says what it returns
-- Says what it *doesn't* do (prevents wrong-tool calls)
+Bad:
 
-### Bad
-
-```
+```text
 search_issues — Searches for issues.
 ```
 
-Claude will call this for anything vaguely search-shaped, including things it can't do.
+When two tools are similar, each description should say when to use the other:
 
-### Disambiguate siblings
-
-When two tools are similar, each description should say when to use the *other* one:
-
-```
-get_user      — Fetch a user by ID. If you only have an email, use find_user_by_email.
-find_user_by_email — Look up a user by email address. Returns null if not found.
+```text
+get_user           — Fetch a user by ID. If you only have an email, use find_user_by_email.
+find_user_by_email — Look up a user by email address. Returns a not-found tool error if absent.
 ```
 
 ---
 
 ## Parameter schemas
 
-**Tight schemas prevent bad calls.** Every constraint you express in the schema is one fewer thing that can go wrong at runtime.
+Every constraint in the schema is one fewer bad call the handler has to recover
+from.
 
 | Instead of | Use |
 |---|---|
@@ -60,15 +61,15 @@ find_user_by_email — Look up a user by email address. Returns null if not foun
 | `z.string()` for a choice | `z.enum(["open", "closed", "all"])` |
 | optional with no hint | `.optional().describe("Defaults to the caller's workspace")` |
 
-**Describe every parameter.** The `.describe()` text shows up in the schema Claude sees. Omitting it is leaving money on the table.
+Describe parameters. The description text is visible in the schema the host sees.
 
 ```typescript
 {
-  query: z.string().describe("Keywords to search for. Supports quoted phrases."),
+  query: z.string().min(1).describe("Keywords to search for. Supports quoted phrases."),
   status: z.enum(["open", "closed", "all"]).default("open")
-    .describe("Filter by status. Use 'all' to include closed items."),
+    .describe("Filter by issue status. Use all to include closed issues."),
   limit: z.number().int().min(1).max(50).default(10)
-    .describe("Max results. Hard cap at 50."),
+    .describe("Maximum results. Hard cap is 50."),
 }
 ```
 
@@ -76,18 +77,23 @@ find_user_by_email — Look up a user by email address. Returns null if not foun
 
 ## Return shapes
 
-Claude reads whatever you put in `content[].text`. Make it parseable.
+Make outputs parseable and useful for follow-up calls.
 
-**Do:**
-- Return JSON for structured data (`JSON.stringify(result, null, 2)`)
-- Return short confirmations for mutations (`"Created issue #123"`)
-- Include IDs Claude will need for follow-up calls
-- Truncate huge payloads and say so (`"Showing 10 of 847 results. Refine the query to narrow down."`)
+Do:
 
-**Don't:**
-- Return raw HTML
-- Return megabytes of unfiltered API response
-- Return bare success with no identifier (`"ok"` after a create — Claude can't reference what it made)
+- return JSON for structured data
+- return short confirmations for mutations
+- include IDs needed for follow-up calls
+- include counts and pagination/truncation notes
+- return `structuredContent` when the SDK/version supports it
+- include a text fallback for hosts that do not read structured output
+
+Do not:
+
+- return raw HTML unless the tool is explicitly an HTML fetcher
+- return megabytes of unfiltered API output
+- return `"ok"` after creating a record without the created ID
+- leak credentials, tokens, private URLs, or internal stack traces
 
 ---
 
@@ -95,17 +101,18 @@ Claude reads whatever you put in `content[].text`. Make it parseable.
 
 | Tool count | Guidance |
 |---|---|
-| 1–15 | One tool per action. Sweet spot. |
-| 15–30 | Still workable. Audit for near-duplicates that could merge. |
-| 30+ | Switch to search + execute. Optionally promote the top 3–5 to dedicated tools. |
+| 1-15 | One tool per action. Sweet spot. |
+| 15-30 | Still workable. Audit near-duplicates. |
+| 30+ | Prefer search + execute. Optionally promote the top 3-5 actions. |
 
-The ceiling isn't a hard protocol limit — it's context-window economics. Every tool schema is tokens Claude spends *every turn*. Thirty tools with rich schemas can eat 3–5k tokens before the conversation even starts.
+This is not a protocol limit. It is model-context and host-UX economics: every
+tool schema costs attention and tokens.
 
 ---
 
-## Errors
+## Tool errors
 
-Return MCP tool errors, not exceptions that crash the transport. Include enough detail for Claude to recover or retry differently.
+Return expected failures as MCP tool results rather than crashing the transport.
 
 ```typescript
 if (!item) {
@@ -113,77 +120,84 @@ if (!item) {
     isError: true,
     content: [{
       type: "text",
-      text: `Item ${id} not found. Use search_items to find valid IDs.`,
+      text: `Item ${id} was not found. Use search_items to find valid IDs.`,
     }],
   };
 }
 ```
 
-The hint ("use search_items…") turns a dead end into a next step.
+Use transport/protocol errors for malformed MCP requests, auth failures, or
+server defects. Use tool errors for domain failures the model can recover from.
 
 ---
 
 ## Tool annotations
 
-Hints the host uses for UX — red confirm button for destructive, auto-approve for readonly. All default to unset (host assumes worst case).
+Tool annotations are host/UI hints.
 
-| Annotation | Meaning | Host behavior |
-|---|---|---|
-| `readOnlyHint: true` | No side effects | May auto-approve |
-| `destructiveHint: true` | Deletes/overwrites | Confirmation dialog |
-| `idempotentHint: true` | Safe to retry | May retry on transient error |
-| `openWorldHint: true` | Talks to external world (web, APIs) | May show network indicator |
+| Annotation | Meaning |
+|---|---|
+| `readOnlyHint: true` | Tool does not modify its environment |
+| `destructiveHint: true` | Tool may delete, overwrite, or otherwise destroy data |
+| `idempotentHint: true` | Repeating same args has no additional effect |
+| `openWorldHint: true` | Tool talks to external systems outside the server |
+
+Example:
 
 ```typescript
 server.registerTool("delete_file", {
-  description: "Delete a file",
-  inputSchema: { path: z.string() },
-  annotations: { destructiveHint: true, idempotentHint: false },
+  title: "Delete file",
+  description: "Delete one file by path. This permanently removes the file.",
+  inputSchema: { path: z.string().describe("Path inside the approved root") },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
 }, handler);
 ```
 
-```python
-@mcp.tool(annotations={"destructiveHint": True, "idempotentHint": False})
-def delete_file(path: str) -> str:
-    ...
-```
-
-Pair with the read/write split advice in `build-mcpb/references/local-security.md` — mark every read tool `readOnlyHint: true`.
+Mark every read-only tool explicitly with `readOnlyHint: true`.
 
 ---
 
 ## Structured output
 
-`JSON.stringify(result)` in a text block works, but the spec has first-class typed output: `outputSchema` + `structuredContent`. Clients can validate.
+Plain JSON in `content[].text` works broadly, but modern MCP supports typed
+output with `outputSchema` and `structuredContent`.
 
 ```typescript
 server.registerTool("get_weather", {
-  description: "Get current weather",
-  inputSchema: { city: z.string() },
+  title: "Get weather",
+  description: "Get current weather for one city.",
+  inputSchema: { city: z.string().describe("City name") },
   outputSchema: { temp: z.number(), conditions: z.string() },
+  annotations: { readOnlyHint: true, destructiveHint: false },
 }, async ({ city }) => {
   const data = await fetchWeather(city);
   return {
-    content: [{ type: "text", text: JSON.stringify(data) }],  // backward compat
-    structuredContent: data,                                    // typed output
+    content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+    structuredContent: data,
   };
 });
 ```
 
-Always include the text fallback — not all hosts read `structuredContent` yet.
+Always include a text fallback unless the target host is known to consume
+structured output.
 
 ---
 
 ## Content types beyond text
 
-Tools can return more than strings:
+Tools can return more than text:
 
-| Type | Shape | Use for |
-|---|---|---|
-| `text` | `{ type: "text", text: string }` | Default |
-| `image` | `{ type: "image", data: base64, mimeType }` | Screenshots, charts, diagrams |
-| `audio` | `{ type: "audio", data: base64, mimeType }` | TTS output, recordings |
-| `resource_link` | `{ type: "resource_link", uri, name?, description? }` | Pointer — client fetches later |
-| `resource` (embedded) | `{ type: "resource", resource: { uri, text\|blob, mimeType } }` | Inline the full content |
+| Type | Use for |
+|---|---|
+| `text` | Default text/JSON response |
+| `image` | Screenshots, charts, diagrams |
+| `audio` | Audio output |
+| `resource_link` | Pointer to a resource the host may fetch later |
+| embedded `resource` | Small resource content that is always needed |
 
-**`resource_link` vs embedded:** link for large payloads or when the client might not need it (let them decide). Embed when it's small and always needed.
+Use `resource_link` for large payloads or optional follow-up context. Embed small
+content only when it is needed immediately.

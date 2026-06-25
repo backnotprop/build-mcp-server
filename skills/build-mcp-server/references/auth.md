@@ -1,82 +1,111 @@
 # Auth for MCP Servers
 
-Auth is the reason most people end up needing a **remote** server even when a local one would be simpler. OAuth redirects, token storage, and refresh all work cleanly when there's a real hosted endpoint to redirect back to.
+Auth has two separate planes. Keep them separate in design and code.
 
-## Claude-specific authentication
+1. **MCP client -> MCP server**: who may call the MCP endpoint.
+2. **MCP server -> upstream service**: what credentials the MCP server uses when
+   it calls the API, database, filesystem, or service it wraps.
 
-Claude's MCP client supports a specific set of auth types — not every spec-compliant flow works. Full reference: https://claude.com/docs/connectors/building/authentication
-
-| Type | Notes |
-|---|---|
-| `oauth_dcr` | Supported. For high-volume directory entries, prefer CIMD or Anthropic-held creds — DCR registers a new client on every fresh connection. |
-| `oauth_cimd` | Supported, recommended over DCR for directory entries. |
-| `oauth_anthropic_creds` | Partner provides `client_id`/`client_secret` to Anthropic; user-consent-gated. Contact `mcp-review@anthropic.com`. |
-| `custom_connection` | User supplies URL/creds at connect time (Snowflake-style). Contact `mcp-review@anthropic.com`. |
-| `none` | Authless. |
-
-**Not supported:** user-pasted bearer tokens (`static_bearer`); pure machine-to-machine `client_credentials` grant without user consent.
-
-**Callback URL** (single, all surfaces): `https://claude.ai/api/mcp/auth_callback`
+Many broken MCP servers collapse these into one vague "API key" and accidentally
+serve every user through the same upstream account. Do not do that unless the
+server is explicitly a private single-tenant tool.
 
 ---
 
-## The three tiers
+## MCP client -> MCP server auth
 
-### Tier 1: No auth / static API key
+### Authless
 
-Server reads a key from env. User provides it once at setup. Done.
+Use only for public data or local prototypes.
 
-```typescript
-const apiKey = process.env.UPSTREAM_API_KEY;
-if (!apiKey) throw new Error("UPSTREAM_API_KEY not set");
+Authless remote servers must still validate inputs and protect against abuse.
+Never expose private records, local filesystem access, write tools, or secrets
+through an authless remote server.
+
+### Static bearer token
+
+Simple and useful for private/team/internal servers.
+
+The MCP client sends:
+
+```http
+Authorization: Bearer <token>
 ```
 
-Works for local stdio, MCPB, and remote servers alike. If this is all you need, stop here.
+Server responsibilities:
 
-### Tier 2: OAuth 2.0 via CIMD (preferred per spec 2025-11-25)
+- verify the token before handling MCP JSON-RPC
+- bind the token to a user, team, tenant, workspace, or allowed scope
+- reject unknown tokens with `401`
+- never log raw bearer tokens
+- rotate/revoke tokens outside the MCP transport
 
-**Client ID Metadata Document.** The MCP host publishes its client metadata at an HTTPS URL and uses that URL *as* its `client_id`. Your authorization server fetches the document, validates it, and proceeds with the auth-code flow. No registration endpoint, no stored client records.
+This is often the right first path for a product that already has API keys for
+agents or automation.
 
-Spec 2025-11-25 promoted CIMD to SHOULD (preferred). Advertise support via `client_id_metadata_document_supported: true` in your OAuth AS metadata.
+### OAuth-backed MCP auth
 
-**Server responsibilities:**
+Use when users need browser consent, per-user authorization, or public remote
+server onboarding.
 
-1. Serve OAuth Authorization Server Metadata (RFC 8414) at `/.well-known/oauth-authorization-server` with `client_id_metadata_document_supported: true`
-2. Serve an MCP-protected-resource metadata document pointing at (1)
-3. At authorize time: fetch `client_id` as an HTTPS URL, validate the returned client metadata, proceed
-4. Validate bearer tokens on incoming `/mcp` requests
+For HTTP MCP servers, MCP authorization is based on OAuth 2.1 patterns:
 
-```
-┌─────────┐  client_id=https://...  ┌──────────────┐   upstream OAuth   ┌──────────┐
-│ MCP host│ ──────────────────────> │ Your MCP srv │ ─────────────────> │ Upstream │
-└─────────┘ <─── bearer token ───── └──────────────┘ <── access token ──└──────────┘
-```
+- The MCP server acts as an OAuth protected resource.
+- The authorization server issues tokens for this MCP server.
+- Clients discover the authorization server through OAuth Protected Resource
+  Metadata or the `WWW-Authenticate` header.
+- Clients use PKCE.
+- Client ID Metadata Documents are the preferred open-ecosystem registration
+  path when supported.
+- Dynamic Client Registration is a compatibility fallback when supported.
 
-### Tier 3: OAuth 2.0 via Dynamic Client Registration (DCR)
+Server responsibilities:
 
-**Backward-compat fallback** — spec 2025-11-25 demoted DCR to MAY. The host discovers your `registration_endpoint`, POSTs its metadata to register itself as a client, gets back a `client_id`, then runs the auth-code flow.
+1. Return useful `401` responses for unauthenticated MCP requests.
+2. Provide OAuth Protected Resource Metadata for the MCP endpoint.
+3. Ensure issued/accepted tokens are meant for this MCP server.
+4. Validate bearer token signature, expiry, issuer, audience/resource, and
+   scopes.
+5. Map the validated token subject to the server's user/tenant/workspace model.
 
-Implement DCR if you need to support hosts that haven't moved to CIMD yet. Same server responsibilities as CIMD, but instead of fetching the `client_id` URL you run a registration endpoint that stores client records.
-
-**Client priority order:** pre-registered → CIMD (if AS advertises `client_id_metadata_document_supported`) → DCR (if AS has `registration_endpoint`) → prompt user.
+Do not accept "any valid token from the identity provider." Validate that the
+token was minted for this MCP server.
 
 ---
 
-## Hosting providers with built-in DCR/CIMD support
+## MCP server -> upstream service auth
 
-Several MCP-focused hosting providers handle the OAuth plumbing for you — you implement tool logic, they run the authorization server. Check their docs for current capabilities. If the user doesn't have strong hosting preferences, this is usually the fastest path to a working OAuth-protected server.
+The MCP server may need credentials to call the service it wraps.
+
+Common shapes:
+
+- **Server-owned credential**: one env/secret-store API key used by a private
+  internal MCP server. Simple, but all callers share the same upstream account.
+- **Per-user OAuth token**: MCP user authorizes the upstream service, and the MCP
+  server stores/refreshes a token bound to that user.
+- **Per-tenant credential**: admin configures a credential for a workspace/team.
+- **Token exchange**: MCP token is exchanged for an upstream token with narrower
+  audience/scope.
+
+Token passthrough is not acceptable: do not receive a token for the MCP server
+and forward that same token to a different upstream API. If the server calls
+another service, use a credential or token intended for that upstream service.
 
 ---
 
-## Local servers and OAuth
+## URL-mode elicitation for upstream credentials
 
-Local stdio servers **can** do OAuth (open a browser, catch the redirect on a localhost port, stash the token in the OS keychain). It's fragile:
+If the MCP server needs an upstream API key, payment credential, password, or
+OAuth authorization, do not ask for it through form-mode elicitation.
 
-- Breaks in headless/remote environments
-- Every user re-does the dance
-- No central token refresh or revocation
+Use one of:
 
-If OAuth is required, lean hard toward remote HTTP. If you *must* ship local + OAuth, the `@modelcontextprotocol/sdk` includes a localhost-redirect helper, and MCPB is the right packaging so at least the runtime is predictable.
+- OAuth authorization flow
+- URL-mode elicitation that sends the user to the MCP server's trusted web page
+- admin configuration outside MCP
+
+For URL-mode elicitation, bind the elicitation request to the MCP user identity
+and verify the same user completes the browser flow before accepting credentials.
 
 ---
 
@@ -84,25 +113,40 @@ If OAuth is required, lean hard toward remote HTTP. If you *must* ship local + O
 
 | Deployment | Store tokens in |
 |---|---|
-| Remote, stateless | Nowhere — host sends bearer each request |
-| Remote, stateful | Session store keyed by MCP session ID (Redis, etc.) |
-| MCPB / local | OS keychain (`keytar` on Node, `keyring` on Python). **Never plaintext on disk.** |
+| Remote stateless bearer-only | Nowhere; validate bearer per request |
+| Remote OAuth/per-user upstream tokens | DB/secret store encrypted or access-controlled by user/tenant |
+| Local stdio | OS keychain/keyring when available; avoid plaintext files |
+
+Never put tokens in tool results, logs, traces, prompt text, exceptions, or test
+snapshots.
 
 ---
 
-## Token audience validation (spec MUST)
+## SDK/helper notes
 
-Validating "is this a valid bearer token" isn't enough. The spec requires validating "was this token minted *for this server*" — RFC 8707 audience. A token issued for `api.other-service.com` must be rejected even if the signature checks out.
+MCP SDK auth APIs are version-sensitive.
 
-**Token passthrough is explicitly forbidden.** Don't accept a token, then forward it upstream. If your server needs to call another service, exchange the token or use its own credentials.
+For current SDK v2 split-package docs:
+
+- Resource Server helpers such as bearer validation and protected-resource
+  metadata are in runtime/framework packages such as `@modelcontextprotocol/express`.
+- Authorization Server helpers from the old core SDK are deprecated/frozen under
+  `@modelcontextprotocol/server-legacy/auth`.
+- New production Authorization Server code should use a dedicated OAuth/IdP
+  library or provider, not legacy SDK AS helpers.
+
+For stable SDK v1 projects, confirm the exact package docs before copying auth
+examples. Do not mix old core-SDK auth examples with v2 split-package imports.
 
 ---
 
-## SDK helpers — don't hand-roll
+## Auth checklist
 
-`@modelcontextprotocol/sdk/server/auth` ships:
-- `mcpAuthRouter()` — Express router for the full OAuth AS surface (metadata, authorize, token)
-- `bearerAuth` — middleware that validates bearer tokens against your verifier
-- `proxyProvider` — forward auth to an upstream IdP
-
-If you're wiring auth from scratch, check these first.
+- [ ] Decide whether the MCP endpoint is authless, static bearer, or OAuth-backed.
+- [ ] Parse and validate auth before dispatching MCP requests.
+- [ ] Keep MCP client auth separate from upstream service credentials.
+- [ ] Validate token audience/resource, not just signature.
+- [ ] Scope calls to tenant/workspace/user before returning data.
+- [ ] Do not expose secrets through tool output, resources, prompts, logs, or errors.
+- [ ] If using URL-mode elicitation, bind the URL flow to the same MCP user.
+- [ ] Add smoke checks for unauthenticated, invalid-token, and valid-token calls.

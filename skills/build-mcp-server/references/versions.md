@@ -1,25 +1,34 @@
-# Version pins
+# Version-Sensitive Claims
 
-Every version-sensitive claim in this skill, in one place. When updating the skill, check these first.
+Check this file before updating scaffolds or protocol guidance.
 
-| Claim | Where stated | Last verified |
+| Claim | Where used | Last checked |
 |---|---|---|
-| `@modelcontextprotocol/ext-apps@1.2.2` CDN pin | `build-mcp-app/SKILL.md`, `build-mcp-app/references/widget-templates.md` (4×) | 2026-03 |
-| Claude Code ≥2.1.76 for elicitation | `elicitation.md:15`, `build-mcp-server/SKILL.md:43,76` | 2026-03 |
-| MCP spec 2025-11-25 CIMD/DCR status | `auth.md:20,24,41` | 2026-03 |
-| MCPB manifest schema v0.4 | `build-mcpb/references/manifest-schema.md` | 2026-03 |
-| CF `agents` SDK / `McpAgent` API | `deploy-cloudflare-workers.md` | 2026-03 |
-| CF template path `cloudflare/ai/demos/remote-mcp-authless` | `deploy-cloudflare-workers.md` | 2026-03 |
+| Stable TypeScript production scaffold targets `@modelcontextprotocol/sdk` v1.x unless the repo has explicitly adopted v2 split packages | `SKILL.md`, `remote-http-scaffold.md` | 2026-06 |
+| SDK v2 development branch uses split packages: `@modelcontextprotocol/server`, `@modelcontextprotocol/node`, `@modelcontextprotocol/express`, `@modelcontextprotocol/hono` | `SKILL.md`, `auth.md`, `remote-http-scaffold.md` | 2026-06 |
+| `StreamableHTTPServerTransport` v1 becomes `NodeStreamableHTTPServerTransport` under `@modelcontextprotocol/node` in v2 | `remote-http-scaffold.md` | 2026-06 |
+| Current MCP HTTP transport requires `Origin` validation when `Origin` is present, and unsupported protocol versions must be rejected by the SDK/middleware/route code | `SKILL.md`, `remote-http-scaffold.md` | 2026-06 |
+| Form-mode elicitation must not request secrets; URL-mode elicitation is the protocol path for sensitive/out-of-band flows | `elicitation.md`, `auth.md` | 2026-06 |
+| Authorization Server helpers are deprecated/frozen under legacy SDK packages in current v2 docs; new production AS code should use a dedicated OAuth/IdP library | `auth.md` | 2026-06 |
+| Cloudflare `agents/mcp` and `McpAgent` template APIs are Cloudflare-specific and must be checked before copying | `deploy-cloudflare-workers.md` | 2026-06 |
 
 ## How to verify
 
 ```bash
-# ext-apps latest
-npm view @modelcontextprotocol/ext-apps version
+# Stable SDK line used by a target project
+npm view @modelcontextprotocol/sdk version
 
-# CF template still exists
-gh api repos/cloudflare/ai/contents/demos/remote-mcp-authless/src/index.ts --jq '.sha'
+# Current split packages if a repo has adopted SDK v2
+npm view @modelcontextprotocol/server version
+npm view @modelcontextprotocol/node version
+npm view @modelcontextprotocol/express version
+npm view @modelcontextprotocol/hono version
 
-# MCPB schema
-curl -sI https://raw.githubusercontent.com/anthropics/mcpb/main/schemas/mcpb-manifest-v0.4.schema.json | head -1
+# Cloudflare template/package existence
+npm view agents version
 ```
+
+Also check the local MCP references when available:
+
+- `research/mcp/references/modelcontextprotocol/specification/`
+- `research/mcp/references/typescript-sdk/`

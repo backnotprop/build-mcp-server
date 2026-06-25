@@ -1,164 +1,135 @@
-# Server capabilities — the rest of the spec
+# Server Capabilities
 
-Features beyond the three core primitives. Most are optional, a few are near-free wins.
+MCP has features beyond tools/resources/prompts. Add them only when the server
+needs them.
+
+SDK APIs for these features are version-sensitive. Confirm the installed SDK
+before copying method names.
 
 ---
 
-## `instructions` — system prompt injection
+## Instructions
 
-One line of config, lands directly in Claude's system prompt. Use it for tool-use hints that don't fit in individual tool descriptions.
+Server instructions describe cross-tool relationships, workflow patterns, or
+constraints. Hosts may include them in the model context.
+
+Use instructions for stable server-level guidance that does not belong in one
+tool description.
 
 ```typescript
 const server = new McpServer(
   { name: "my-server", version: "1.0.0" },
-  { instructions: "Always call search_items before get_item — IDs aren't guessable." },
+  { instructions: "Use search_items to discover IDs before calling get_item." },
 );
 ```
 
-```python
-mcp = FastMCP("my-server", instructions="Always call search_items before get_item — IDs aren't guessable.")
-```
-
-This is the highest-leverage one-liner in the spec. If Claude keeps misusing your tools, put the fix here.
+Do not use instructions to override host/system behavior or duplicate every tool
+description.
 
 ---
 
-## Sampling — delegate LLM calls to the host
+## Sampling
 
-If your tool logic needs LLM inference (summarize, classify, generate), don't ship your own model client. Ask the host to do it.
+Sampling lets a server request model output from the connected host. Use it when
+tool logic needs summarization, classification, extraction, or generation but
+you do not want the MCP server to own an LLM provider integration.
 
-```typescript
-// Inside a tool handler
-const result = await extra.sendRequest({
-  method: "sampling/createMessage",
-  params: {
-    messages: [{ role: "user", content: { type: "text", text: `Summarize: ${doc}` } }],
-    maxTokens: 500,
-  },
-}, CreateMessageResultSchema);
-```
+Rules:
 
-```python
-# fastmcp
-response = await ctx.sample("Summarize this document", context=doc)
-```
-
-**Requires client support** — check `clientCapabilities.sampling` first. Model preference hints are substring-matched (`"claude-3-5"` matches any Claude 3.5 variant).
+- check client capabilities before requesting sampling
+- provide a fallback if unsupported
+- do not send secrets or unnecessary private data
+- bound token/output size
 
 ---
 
-## Roots — query workspace boundaries
+## Roots
 
-Instead of hardcoding a root directory, ask the host which directories the user approved.
+Roots let a local-capable host tell a server which directories or workspace roots
+the user approved.
 
-```typescript
-const caps = server.getClientCapabilities();
-if (caps?.roots) {
-  const { roots } = await server.server.listRoots();
-  // roots: [{ uri: "file:///home/user/project", name: "My Project" }]
-}
-```
+Use roots for local stdio servers that need filesystem boundaries. Do not
+hardcode broad filesystem access when roots are available.
 
-```python
-roots = await ctx.list_roots()
-```
-
-Particularly relevant for MCPB local servers — see `build-mcpb/references/local-security.md`.
+Roots are version-sensitive and may be deprecated in newer protocol versions, so
+prefer explicit configuration, tool parameters, or resource URIs when that is
+cleaner.
 
 ---
 
-## Logging — structured, level-aware
+## Logging
 
-Better than stderr for remote servers. Client can filter by level.
+MCP logging sends structured messages to the client. Prefer it over writing
+everything to stderr for remote servers.
 
-```typescript
-// In a tool handler
-await extra.sendNotification({
-  method: "notifications/message",
-  params: { level: "info", logger: "my-tool", data: { msg: "Processing", count: 42 } },
-});
-```
+Use logging for:
 
-```python
-await ctx.info("Processing", count=42)   # also: ctx.debug, ctx.warning, ctx.error
-```
+- progress details that are useful to a user/developer
+- integration warnings
+- non-secret diagnostic context
 
-Levels follow syslog: `debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`, `emergency`. Client sets minimum via `logging/setLevel`.
+Do not log bearer tokens, upstream credentials, full private documents, or raw
+tool arguments that may contain secrets.
 
 ---
 
-## Progress — for long-running tools
+## Progress
 
-Client sends a `progressToken` in request `_meta`. Server emits progress notifications against it.
+Long-running tools can emit progress notifications when the client supplies a
+progress token.
 
-```typescript
-async (args, extra) => {
-  const token = extra._meta?.progressToken;
-  for (let i = 0; i < 100; i++) {
-    if (token !== undefined) {
-      await extra.sendNotification({
-        method: "notifications/progress",
-        params: { progressToken: token, progress: i, total: 100, message: `Step ${i}` },
-      });
-    }
-    await doStep(i);
-  }
-  return { content: [{ type: "text", text: "Done" }] };
-}
-```
+Rules:
 
-```python
-async def long_task(ctx: Context) -> str:
-    for i in range(100):
-        await ctx.report_progress(progress=i, total=100, message=f"Step {i}")
-        await do_step(i)
-    return "Done"
-```
+- treat progress as optional
+- do not fail the tool if progress cannot be emitted
+- keep progress messages concise
+- still support cancellation
 
 ---
 
-## Cancellation — honor the abort signal
+## Cancellation
 
-Long tools should check the SDK-provided `AbortSignal`:
+Long-running tools should honor the request cancellation signal provided by the
+SDK/runtime.
+
+For TypeScript handlers, pass the SDK `AbortSignal` to fetch/database clients
+when possible and check it in long loops.
 
 ```typescript
-async (args, extra) => {
+async (_args, ctx) => {
   for (const item of items) {
-    if (extra.signal.aborted) throw new Error("Cancelled");
+    if (ctx.signal?.aborted) {
+      throw new Error("Cancelled");
+    }
     await process(item);
   }
 }
 ```
 
-fastmcp handles this via asyncio cancellation — no explicit check needed if your handler is properly async.
+The exact signal location differs by SDK version. Check the installed SDK docs.
 
 ---
 
-## Completion — autocomplete for prompt args
+## Completion
 
-If you've registered prompts or resource templates with arguments, you can offer autocomplete:
+Completion provides autocomplete suggestions for prompt arguments or resource
+template variables.
 
-```typescript
-server.registerPrompt("query", {
-  argsSchema: {
-    table: completable(z.string(), async (partial) => tables.filter(t => t.startsWith(partial))),
-  },
-}, ...);
-```
+Use it when users must choose from many valid values, such as table names,
+workspace IDs, projects, labels, or document paths.
 
-Low priority unless your prompts have many valid values.
+Skip it for the first version unless argument discovery is painful.
 
 ---
 
-## Which capabilities need client support?
+## Capability checklist
 
-| Feature | Server declares | Client must support | Fallback if not |
-|---|---|---|---|
-| `instructions` | implicit | — | — (always works) |
-| Logging | `logging: {}` | — | stderr |
-| Progress | — | sends `progressToken` | silently skip |
-| Sampling | — | `sampling: {}` | bring your own LLM |
-| Elicitation | — | `elicitation: {}` | return text, ask Claude to relay |
-| Roots | — | `roots: {}` | config env var |
-
-Check client caps via `server.getClientCapabilities()` (TS) or `ctx.session.client_params.capabilities` (fastmcp) before using the bottom three.
+| Feature | Needs client capability? | Safe fallback |
+|---|---|---|
+| instructions | no explicit client capability | omit if not useful |
+| logging | server capability + client support varies | server logs |
+| progress | client sends a progress token | silently skip progress |
+| sampling | yes | return a tool error or use server-owned LLM if explicitly chosen |
+| elicitation | yes | return a tool error or ask for input as a normal argument |
+| roots | yes | explicit config/tool parameter |
+| completion | yes | no autocomplete |
