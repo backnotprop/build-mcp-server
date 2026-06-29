@@ -2,7 +2,7 @@
 name: build-mcp-server
 description: Design and scaffold Model Context Protocol servers. Use when the user asks to build an MCP server, create an MCP integration, expose an API or data source through MCP tools/resources/prompts, or choose an MCP transport/auth/deployment shape.
 metadata:
-  version: "0.2.0"
+  version: "0.2.1"
 ---
 
 # Build an MCP Server
@@ -39,6 +39,10 @@ said.
 - A team, organization, or external users: remote Streamable HTTP.
 - A self-hosted customer deployment: remote Streamable HTTP inside their
   deployment boundary.
+- Name the target hosts if known, such as Codex, Claude Code, Cursor, ChatGPT,
+  a browser app, or a custom client. Real hosts differ in OAuth discovery,
+  registration, callback, token refresh, and tool-schema UX. For remote OAuth
+  servers, see `references/target-client-compatibility.md`.
 
 ### 3. What primitives does it need?
 
@@ -193,6 +197,8 @@ Once deployment model, primitive shape, framework, and auth are chosen:
    - a tool error returned as an MCP tool result, not a crashed transport
 5. Run MCP Inspector against the local server.
 6. Test with the actual target MCP host.
+7. For OAuth remote servers, verify login, reconnect/refresh after access-token
+   expiry, and revoke/re-auth behavior with each target host.
 
 ---
 
@@ -229,13 +235,16 @@ Before calling a server ready:
       middleware, or explicit route code.
 - [ ] Auth is implemented before private data or mutations are exposed.
 - [ ] MCP client auth is separate from upstream-service auth.
+- [ ] OAuth testing is run without bearer-token config that masks OAuth
+      discovery in the target host.
 - [ ] Tool schemas reject invalid input at the MCP seam.
 - [ ] Mutating tools are separated from read tools.
 - [ ] Tools include useful `title`, `description`, `inputSchema`, and safety
       annotations.
 - [ ] Errors return MCP results/errors, not HTML 500s.
 - [ ] Secrets come from config/env/secret stores, never hardcoded.
-- [ ] Inspector and target-host smoke checks pass.
+- [ ] Inspector and target-host smoke checks pass, including post-expiry
+      reconnect/refresh for OAuth servers.
 
 ---
 
@@ -249,4 +258,6 @@ Before calling a server ready:
 - `references/elicitation.md` — mid-call user input and URL handoff
 - `references/server-capabilities.md` — instructions, sampling, roots, logging,
   progress, cancellation
+- `references/target-client-compatibility.md` — real-host OAuth, refresh, and
+  tool-UX checks
 - `references/versions.md` — version-sensitive claims ledger

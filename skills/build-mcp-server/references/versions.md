@@ -11,6 +11,7 @@ Check this file before updating scaffolds or protocol guidance.
 | Form-mode elicitation must not request secrets; URL-mode elicitation is the protocol path for sensitive/out-of-band flows | `elicitation.md`, `auth.md` | 2026-06 |
 | Authorization Server helpers are deprecated/frozen under legacy SDK packages in current v2 docs; new production AS code should use a dedicated OAuth/IdP library | `auth.md` | 2026-06 |
 | Cloudflare `agents/mcp` and `McpAgent` template APIs are Cloudflare-specific and must be checked before copying | `deploy-cloudflare-workers.md` | 2026-06 |
+| Codex Streamable HTTP OAuth discovery can be masked by configured bearer auth; path-scoped authorization-server metadata for `/mcp` is exercised in Codex OAuth tests | `target-client-compatibility.md` | 2026-06 |
 
 ## How to verify
 
@@ -32,3 +33,6 @@ Also check the local MCP references when available:
 
 - `research/mcp/references/modelcontextprotocol/specification/`
 - `research/mcp/references/typescript-sdk/`
+
+For real-host compatibility work, also check current host docs or source. Useful
+targets include Codex, Claude Code, Cursor, ChatGPT, and the user's custom host.

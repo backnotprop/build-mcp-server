@@ -57,7 +57,15 @@ For HTTP MCP servers, MCP authorization is based on OAuth 2.1 patterns:
 - Clients use PKCE.
 - Client ID Metadata Documents are the preferred open-ecosystem registration
   path when supported.
-- Dynamic Client Registration is a compatibility fallback when supported.
+- Dynamic Client Registration remains a practical compatibility path for current
+  hosts when supported.
+
+For product-backed MCP servers, the human login provider and the agent
+credential are usually separate. WorkOS, Cloudflare Access, OIDC, or another
+provider can prove "this human logged in"; the product should issue the MCP
+token that answers "which user/tenant/workspace/scopes did this agent get?"
+Do not hand MCP clients browser cookies, upstream identity-provider tokens, or
+Cloudflare Access assertions as their long-lived agent credential.
 
 Server responsibilities:
 
@@ -70,6 +78,12 @@ Server responsibilities:
 
 Do not accept "any valid token from the identity provider." Validate that the
 token was minted for this MCP server.
+
+Refresh behavior is part of auth UX, not only security hardening. If the client
+should stay connected, test with real hosts after access-token expiry. If you
+support OAuth and bearer/API-key fallback, test those paths separately; bearer
+headers can cause some hosts to skip OAuth discovery. See
+`references/target-client-compatibility.md`.
 
 ---
 
@@ -147,6 +161,7 @@ examples. Do not mix old core-SDK auth examples with v2 split-package imports.
 - [ ] Keep MCP client auth separate from upstream service credentials.
 - [ ] Validate token audience/resource, not just signature.
 - [ ] Scope calls to tenant/workspace/user before returning data.
+- [ ] For OAuth, test initial login and post-expiry refresh with target hosts.
 - [ ] Do not expose secrets through tool output, resources, prompts, logs, or errors.
 - [ ] If using URL-mode elicitation, bind the URL flow to the same MCP user.
 - [ ] Add smoke checks for unauthenticated, invalid-token, and valid-token calls.

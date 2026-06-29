@@ -73,6 +73,30 @@ Describe parameters. The description text is visible in the schema the host sees
 }
 ```
 
+## Required arguments and defaults
+
+If a field is required, make the description strong enough that a model will
+include it. Do not rely on the schema alone for choices that humans would not
+know.
+
+Good:
+
+```text
+kind — Required document format. Use "markdown" unless the user explicitly asks
+for HTML.
+```
+
+Weak:
+
+```text
+kind — Document kind.
+```
+
+For agentic workflows, add discovery tools so users do not need to paste opaque
+IDs. A server with only `read_document(workspace_id, document_id)` is useful for
+smoke tests; a real user flow usually also needs `list_workspaces`,
+`list_documents`, or search.
+
 ---
 
 ## Return shapes

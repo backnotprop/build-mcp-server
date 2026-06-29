@@ -23,6 +23,11 @@ const server = new McpServer(
 );
 ```
 
+Some hosts use server instructions during startup and tool discovery. Keep the
+opening self-contained: what tasks this server handles, the normal discovery
+workflow, and important constraints such as rate limits or "read before write."
+Avoid burying critical guidance after a long preamble.
+
 Do not use instructions to override host/system behavior or duplicate every tool
 description.
 
