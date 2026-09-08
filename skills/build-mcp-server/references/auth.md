@@ -17,8 +17,10 @@ OS keychain, or another local mechanism rather than running the HTTP OAuth flow.
 ## Contents
 
 - MCP client to MCP server: authless, bearer, and OAuth
+- Who runs the authorization server
 - MCP server to upstream service
 - URL-mode setup and token storage
+- Spec security requirements
 - SDK notes and checklist
 
 ## MCP client -> MCP server
@@ -43,7 +45,14 @@ Authorization: Bearer <token>
 Verify it before MCP dispatch, bind it to a principal/tenant/scopes, reject
 unknown or expired tokens with 401, and never log it. This can be a practical
 closed-system mechanism, but it is not the interoperable browser-consent flow
-defined by the MCP OAuth profile.
+defined by the MCP OAuth profile. It is the right lane for automation, CI, and
+scripts, and the wrong lane as the only one when humans connect through hosts
+that expect the browser flow.
+
+If the server accepts both an API key and an OAuth token, discriminate on a
+token prefix and commit to that branch. A claimed-but-invalid bearer must return
+401; it must never fall through to a weaker credential branch that might accept
+it, and both branches must fail identically so the response is not an oracle.
 
 ### OAuth-protected MCP server
 
@@ -57,6 +66,29 @@ In the MCP authorization model:
 The authorization server may be colocated with the MCP server, but these are
 separate roles. A server that only acts as the protected resource should not
 grow a home-built token issuer merely because it needs to verify bearer tokens.
+
+## Who runs the authorization server
+
+The specification does not say. Three shapes satisfy it, and the choice drives
+most of the remaining work:
+
+| Shape                       | Choose when                                                                                              | Read                        |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------- |
+| Delegate to an external AS  | You already run an identity provider that speaks OAuth 2.1 with PKCE, resource indicators, and metadata   | The rest of this file       |
+| Act as your own AS          | The product already signs people in through a browser and a second identity system is not worth it        | `authorization-server.md`   |
+| Accept a long-lived API key | Automation and CI, or a labelled fallback beside a browser lane                                           | Static bearer token, above  |
+
+Delegation looks cheapest and is often not cheapest in calendar time: provider
+consoles need metadata documents enabled, registration enabled, and a default
+resource indicator set, and none of that is a code change. Schedule it with an
+owner.
+
+If you run your own authorization server, or if you want browser-hosted clients
+to work at all, read `authorization-server.md`. It covers the endpoint
+inventory, the CORS rules (wildcard on the metadata documents, registration, and
+token; never on authorize, consent, revoke, or the MCP endpoint), registration
+hardening, consent and remembered grants, code and token handling, revocation,
+and the assertions that prove it.
 
 #### Protected-resource responsibilities
 
@@ -185,13 +217,77 @@ who triggered the MCP request before accepting credentials.
 Never put tokens in source, URLs, tool results, resources, prompts, logs,
 traces, exceptions, or test snapshots.
 
+## Spec security requirements
+
+The `2026-07-28` security guidance names specific attacks. Restated as server
+obligations:
+
+- **Confused deputy.** A server that proxies to a third-party API with one
+  static upstream client identity must obtain user consent for each MCP client
+  before forwarding. Without it, a consent cookie from an earlier legitimate flow
+  lets an attacker's crafted authorization request skip the consent screen and
+  redirect the code to a URI they registered. See `authorization-server.md` for
+  the consent-page shape.
+- **Token passthrough.** Never accept a token that was not issued for this MCP
+  server, and never forward the token you received to an upstream API. The
+  upstream token is a separate token from a separate issuer. Passthrough breaks
+  audience boundaries, defeats rate limits and request validation that key on
+  audience, and makes audit trails misattribute callers.
+- **State handle hijacking.** This is what replaced session hijacking now that
+  the protocol has no sessions. A handle is not authentication. Generate handles
+  from a secure random source, bind them server-side to the verified principal
+  (key stored state as principal plus handle, with the principal derived from
+  the token, never from an argument), expire them, and reject a handle presented
+  by anyone else.
+- **SSRF.** Any URL the server fetches on a caller's behalf, including a Client
+  ID Metadata Document and any opt-in JSON Schema `$ref`, needs scheme and host
+  allowlisting, resolved-address checks against private ranges, no redirect
+  following, timeouts, and body size caps.
+- **Authorization URL handling.** Only `http` and `https` authorization URLs,
+  with `http` limited to loopback in development. Never open a URL through a
+  shell.
+- **Localhost redirect impersonation.** A Client ID Metadata Document proves
+  control of a domain and proves nothing about which local process listens on a
+  loopback port. Display the redirect hostname during authorization and warn on
+  loopback-only redirect URIs.
+- **Scope minimization.** Keep `scopes_supported` to the minimum needed for
+  basic functionality and elevate through targeted `WWW-Authenticate` challenges.
+  Do not publish every scope, do not use wildcard or omnibus scopes, and do not
+  bundle unrelated privileges to preempt future prompts. A token's claimed scopes
+  are never a substitute for server-side authorization.
+
 ## SDK notes
 
-In the official TypeScript SDK v2 split packages, resource-server middleware
-and Protected Resource Metadata helpers live in the runtime/framework packages.
-The older Authorization Server helpers are frozen under
-`@modelcontextprotocol/server-legacy/auth`; new production authorization
-servers should use a dedicated OAuth/identity provider library.
+In the official TypeScript SDK v2 split packages, the resource-server half is
+supplied and the authorization-server half is not.
+
+| Helper                                   | Package                          | Does                                                                               |
+| ---------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------- |
+| `requireBearerAuth`                      | `@modelcontextprotocol/server`   | Web-standard gate: takes a `Request`, returns verified `AuthInfo` or a 401/403      |
+| `requireBearerAuth`                      | `@modelcontextprotocol/express`  | The same core as Express middleware, attaching `req.auth`                          |
+| `getOAuthProtectedResourceMetadataUrl`   | `@modelcontextprotocol/express`  | Builds the path-aware RFC 9728 URL for the `resource_metadata` challenge parameter |
+| `oauthMetadataResponse`                  | `@modelcontextprotocol/server`   | Serves both well-known documents from a `fetch` handler                            |
+| `mcpAuthMetadataRouter`                  | `@modelcontextprotocol/express`  | The Express equivalent, mounting both well-known routes                            |
+
+You supply one function: take a raw token string and return an `AuthInfo`. Local
+JWT verification, RFC 7662 introspection, or a provider call all fit behind it.
+Always populate `expiresAt`; the gate answers `401 invalid_token` when it is
+unset. Throw the SDK's `OAuthError` with the invalid-token code for a rejection;
+any other exception becomes a `500`.
+
+Two caveats:
+
+- `requiredScopes` on the gate is endpoint-wide. A scope only some tools need is
+  a check inside the handler, returning `isError: true` so the model reads the
+  refusal, rather than a 403 that drops the call.
+- The SDK's metadata response helper ships permissive, reflecting CORS. If you
+  care about the exact policy, serve the documents yourself with a fixed
+  allow-headers list. See `authorization-server.md`.
+
+The v1 Authorization Server helpers (`mcpAuthRouter`, `ProxyOAuthServerProvider`
+and friends) are frozen under `@modelcontextprotocol/server-legacy/auth`. The
+SDK never issues tokens; a new authorization server uses a dedicated identity
+provider or the design in `authorization-server.md`.
 
 SDK helpers are version-sensitive. Confirm the package docs and do not mix v1
 core-SDK auth examples with v2 imports.
@@ -199,7 +295,12 @@ core-SDK auth examples with v2 imports.
 ## Checklist
 
 - [ ] Choose authless, closed-system bearer, or OAuth-protected HTTP explicitly.
+- [ ] Name who runs the authorization server: an external provider, this server,
+      or nobody because the lane is API keys.
 - [ ] Authenticate before MCP dispatch and authorize every tool/resource access.
+- [ ] Discriminate multiple credential shapes by prefix, with no fallthrough.
+- [ ] Serve CORS on the metadata documents (and on registration and token if you
+      run the AS), and on nothing else.
 - [ ] Keep MCP authorization separate from upstream credentials.
 - [ ] Validate token issuer, audience/resource, expiry, and scopes—not only its signature.
 - [ ] Partition every read, write, cache, and state handle by the verified principal/tenant.

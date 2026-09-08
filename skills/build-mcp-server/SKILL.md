@@ -110,6 +110,12 @@ Separate two authorization planes:
 
 Do not collapse them into one vague "API key". See `references/auth.md`.
 
+Then answer a second question the spec leaves open: **who runs the authorization
+server?** Delegate to an external identity provider, act as your own, or accept
+API keys and skip OAuth. Delegation is not automatically cheapest; provider
+consoles need configuration nobody can do in code. If the answer is "we do", or
+if browser-hosted clients must work, read `references/authorization-server.md`.
+
 ### 7. Does state span requests?
 
 Modern MCP has no protocol session. If application state spans calls, mint an
@@ -350,6 +356,8 @@ second protocol model.
 | Cloudflare Workers deployment                  | `references/deploy-cloudflare-workers.md`   |
 | Tool names, schemas, annotations, or state     | `references/tool-design.md`                 |
 | MCP OAuth or upstream authorization            | `references/auth.md`                        |
+| Running the authorization server yourself      | `references/authorization-server.md`        |
+| Browser-hosted MCP clients, OAuth CORS         | `references/authorization-server.md`        |
 | Resources, URI templates, or prompts           | `references/resources-and-prompts.md`       |
 | Form/URL elicitation or MRTR state             | `references/elicitation.md`                 |
 | Discovery, caching, subscriptions, extensions  | `references/server-capabilities.md`         |
