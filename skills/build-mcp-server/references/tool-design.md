@@ -16,6 +16,15 @@ unnecessary confirmations, and authorization mistakes.
 - Give every tool a stable, short name. Prefer `snake_case` for consistency,
   though the protocol also permits ASCII letters, digits, `_`, `-`, and `.`.
 - Keep names within 1–128 characters and unique within the server.
+- Pick one convention for the whole server and hold it. A namespace prefix
+  (`service.verb_noun` or `service_verb_noun`) helps a model tell your tools
+  apart from the other servers loaded in the same session. Mixed conventions in
+  one fleet are their own defect.
+- Declare each tool name as an exported constant and reference the constant from
+  registration, tests, and any contract file. A name typed twice drifts.
+- Bound agent authority in the tool set itself. A capability you do not want an
+  agent to have is one you do not register, not one you guard with a
+  description.
 - Add a human-readable `title` and precise `description`.
 - Use the narrowest practical `inputSchema` and validate at the MCP seam.
 - Split reads and mutations into separate tools.
@@ -191,6 +200,58 @@ handlers unless that SDK explicitly requires it.
 Do not return raw HTML unless the tool is intentionally an HTML fetcher,
 megabytes of unfiltered API output, a bare `"ok"` without the created ID, or
 credentials/internal stack traces.
+
+## Moving files and large content
+
+Do not carry file bytes through tool arguments. A model generating arguments
+cannot reliably reproduce large content and cannot read binary content at all.
+One team watched an agent truncate a 114 KB text file twice through an inline
+`content` parameter, well under the declared size cap, and only caught it
+because the store was content-addressed and the returned hash did not match the
+local file's. Inline content is fine for small text and is a dead end for
+anything else.
+
+As of `2026-07-28` the protocol has no mechanism for this. `resources/read` is a
+client asking the server for a resource the server holds, not a server asking the
+client for a file: `resources` is a server capability, and the client capability
+set has no resource service. Roots carry a URI and a name with no read method
+and are informational, not access control. A File Uploads Working Group is
+chartered to define declarative file inputs so hosts can present a native picker
+and substitute the bytes, anchored on a SEP that is still an open proposal.
+Design a seam for it; do not implement the draft.
+
+Until then, the portable pattern is **MCP as the control plane, bytes out of
+band**:
+
+1. A `begin_upload` tool authenticates through MCP, authorizes the destination,
+   and returns a short-lived one-time upload URL, the exact required headers, an
+   expiry, and the declared size and hash it will check.
+2. The agent's shell performs the transfer. The model carries the path, URL,
+   headers, size, and hash, and never the file body. Every mainstream host has a
+   shell.
+3. A `commit_upload` tool re-checks authorization, then verifies the staged
+   object's actual size and hash against what was declared, and publishes only on
+   an exact match.
+
+Rules that make it safe:
+
+- Bind the upload capability narrowly: one principal, one destination, one
+  method, one object, one declared size and hash, one use, short expiry.
+- Re-validate every limit at commit, not only at issue time. If an outer layer
+  advertises a looser cap than the storage layer enforces, staging success can
+  otherwise bypass the real guardrail.
+- Verify by hash end to end. That is what turns silent corruption into a failed
+  commit.
+- Accept the residual risk knowingly: the URL is visible to the model, so its
+  scope and lifetime carry the security burden.
+- Integration-test per host. Source capability is not permission; network policy,
+  sandboxing, and approval settings can still block the transfer.
+
+A local stdio companion is a fallback, not the answer: it adds install, upgrade,
+and path-security surface, and MCP does not require a host to pass a remote
+bearer token to a stdio child, so the credential handoff is host-specific.
+Chunked inline upload keeps the model in the byte path and still cannot handle
+binary; do not build it.
 
 ## Content blocks
 
