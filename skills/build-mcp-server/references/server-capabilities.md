@@ -50,6 +50,32 @@ Keep the opening self-contained: what the server does, its discovery-first
 workflow, and critical limits. Do not duplicate every tool description or try
 to override host/system behavior.
 
+Treat the string as a first-class artifact, not a comment. It is the one place
+that states the intended loop across tools, and a model reads it before it reads
+any individual description. A useful instructions string covers, in order:
+
+1. What the server is for, and the starting ladder (list, then list, then read)
+   for a caller who was given no identifiers.
+2. The lifecycle verbs that create and destroy, with the ones that are
+   irreversible or owner-only named as such.
+3. The one or two counter-intuitive data rules that a caller will otherwise get
+   wrong, stated as rules rather than described.
+4. Restraint: when to propose a change rather than make it.
+5. Concurrency discipline: which read to do before which write, and which
+   version or hash field feeds the next call.
+6. What to hand a human, and what to fetch out of band rather than through a
+   tool result.
+7. Identity: ask who you are before acting as someone.
+8. **An escape hatch.** Say plainly that these tools are one door, name the
+   other surfaces (the REST API and its contract, a CLI, a git endpoint), and
+   point at a fetchable guide on the same origin. Tell the caller to read it
+   before working around a gap in the tools. Agents route around missing tools;
+   this decides whether they route somewhere correct.
+
+Set cache hints honestly. If `server/discover` or `tools/list` results depend on
+the caller's identity or authorization, they are `cacheScope: "private"`, and a
+`ttlMs` of zero is the correct answer when the list can differ per caller.
+
 ## Caching
 
 Modern complete results from these methods require `ttlMs` and `cacheScope`:
