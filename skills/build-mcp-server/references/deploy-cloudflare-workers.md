@@ -156,16 +156,50 @@ npx wrangler secret put UPSTREAM_API_KEY
 
 ## Authorization
 
-For a protected server, verify the bearer token before `handler.fetch` and pass
-the resulting `authInfo` into the handler. Also serve OAuth Protected Resource
-Metadata at the path-aware RFC 9728 location and return a useful
-`WWW-Authenticate` challenge.
+Workers are a web-standard `fetch` host, so use the web-standard gate from
+`@modelcontextprotocol/server` rather than a framework middleware:
+
+```typescript
+import { createMcpHandler, requireBearerAuth } from "@modelcontextprotocol/server";
+
+const gate = requireBearerAuth({ verifier, requiredScopes: ["mcp"] });
+
+// inside fetch, after the Host/Origin checks:
+const auth = await gate(request);
+if (auth instanceof Response) return auth;
+return handler.fetch(request, { authInfo: auth });
+```
+
+The gate resolves to the verified `AuthInfo` or to a ready-to-return challenge
+`Response`. Handlers read the caller as `ctx.http.authInfo`, which is
+`undefined` when the same server runs over stdio, so guard the read if it serves
+both. `requiredScopes` is endpoint-wide; a scope only some tools need is a check
+inside the handler returning `isError: true`, so the model reads the refusal
+instead of losing the call.
+
+You supply `verifyAccessToken`: raw token in, `AuthInfo` out. Always populate
+`expiresAt`, or the gate answers `401 invalid_token` for every request.
+
+Serve OAuth Protected Resource Metadata at the path-aware RFC 9728 location and
+point the `WWW-Authenticate` challenge at it. `oauthMetadataResponse` from
+`@modelcontextprotocol/server` serves both well-known documents from a `fetch`
+handler and falls through when the path does not match. Note that it ships
+permissive, reflecting CORS; if you want a fixed allow-headers policy, serve the
+documents yourself.
 
 An authorization-server library can issue tokens, but it does not replace the
 MCP resource-server checks: validate expiry, issuer, audience/resource, scopes,
 and caller/tenant binding. Client ID Metadata Documents are the preferred open
 registration path in `2026-07-28`; Dynamic Client Registration is deprecated
 and should exist only as a tested compatibility fallback.
+
+If the Worker is also the authorization server, everything above is the
+resource-server half only. The rest, including the endpoint inventory, the CORS
+rules for browser-hosted clients, registration hardening, consent, and
+revocation, is in `authorization-server.md`. Two Workers-specific notes: a
+per-IP rate limiter on the registration and token doors is a binding you must
+declare, and the limiter must run before any parse or storage write, which is
+also what makes it assertable in a test.
 
 ## Compatibility gate for Cloudflare-specific wrappers
 
