@@ -8,7 +8,7 @@ unnecessary confirmations, and authorization mistakes.
 
 - Baseline, descriptions, and input schemas
 - Required arguments, discovery, and tool count
-- Results, content blocks, and errors
+- Results, moving files, content blocks, and errors
 - Stateful workflows and `x-mcp-header`
 
 ## Baseline
@@ -52,21 +52,21 @@ Write a one-line manpage entry plus the details that disambiguate the tool.
 Good:
 
 ```text
-search_issues — Search issue titles and bodies by keyword. Returns at most
+search_issues: Search issue titles and bodies by keyword. Returns at most
 limit results in descending update order. Does not search comments or pull requests.
 ```
 
 Weak:
 
 ```text
-search_issues — Searches for issues.
+search_issues: Searches for issues.
 ```
 
 When tools overlap, explain the decision:
 
 ```text
-get_user           — Fetch a user by ID. If only an email is known, use find_user_by_email.
-find_user_by_email — Resolve one email to a user ID. Returns a not-found tool error if absent.
+get_user:           Fetch a user by ID. If only an email is known, use find_user_by_email.
+find_user_by_email: Resolve one email to a user ID. Returns a not-found tool error if absent.
 ```
 
 Do not use descriptions to override host/system behavior or issue global model
@@ -125,7 +125,7 @@ schema keyword alone for a choice a user/model cannot infer.
 Good:
 
 ```text
-kind — Required output format. Use "markdown" unless the user explicitly asks for HTML.
+kind: Required output format. Use "markdown" unless the user explicitly asks for HTML.
 ```
 
 For agentic workflows, provide search/list tools so users do not have to know
@@ -162,7 +162,7 @@ Make output easy to parse and useful for the next call:
 - return a short, specific confirmation after a mutation
 - bound result size and link to a resource for large optional data
 
-In `2026-07-28`, `structuredContent` may be any JSON value—not only an object.
+In `2026-07-28`, `structuredContent` may be any JSON value, not only an object.
 When `outputSchema` exists, the server must return matching structured content
 and the client should validate it.
 

@@ -124,7 +124,7 @@ export default {
 protocol session, session routing, GET stream, DELETE endpoint, or SSE replay is
 needed for the modern core protocol. Use Durable Objects only for actual
 application state or multi-instance notification fan-out, with explicit state
-handles and authorization—not to recreate `Mcp-Session-Id`.
+handles and authorization, not to recreate `Mcp-Session-Id`.
 
 This minimal Worker explicitly rejects `subscriptions/listen` by setting
 `maxSubscriptions: 0`; it must not open SSE when the application has no event
