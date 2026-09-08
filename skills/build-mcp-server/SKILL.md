@@ -32,6 +32,16 @@ behavior in the selected release instead of transliterating TypeScript APIs.
 Your first job is discovery, not code. MCP servers stay small when protocol
 version, transport, authorization, and primitive shape are chosen explicitly.
 
+Two standing rules for this work:
+
+- **Assume your training data is stale on MCP.** The specification moves fast
+  and revisions change wire behavior, not just wording. Verify every protocol
+  claim against the versioned specification page for the revision you target and
+  its changelog, and every SDK claim against the installed version.
+- **MCP is a thin adapter over a good API, not the design center.** Adapt to the
+  service layer that already owns validation, authorization, persistence, and
+  events. Never duplicate route business logic inside a tool handler.
+
 ---
 
 ## Phase 1 — Interrogate the use case
@@ -144,6 +154,21 @@ For `2026-07-28`:
   replay
 - a response can be JSON or a request-scoped SSE stream
 - long-lived change events use `subscriptions/listen`
+
+Two different things are called "SSE" and the answer differs:
+
+- **HTTP+SSE, the 2024-11-05 transport** with its separate SSE and POST
+  endpoints, is deprecated and is in the deprecated-features registry. Do not
+  adopt it. Migrate existing deployments to Streamable HTTP.
+- **SSE as a response content type inside Streamable HTTP** is current. A server
+  may answer any request POST with either `application/json` or a
+  request-scoped `text/event-stream`, and a client must support both. A
+  JSON-only server is valid; a client that only accepts JSON is not.
+
+Do not hardcode a protocol version in product code. Let the SDK negotiate, and
+keep version strings in tests and smoke scripts where a change is visible. A
+version you observe a client negotiating is that client's choice, not your
+server's maximum; read the maximum from `server/discover`.
 
 Use `references/remote-http-scaffold.md` for the modern TypeScript scaffold.
 Use `references/deploy-cloudflare-workers.md` only for a Cloudflare Workers
@@ -267,7 +292,12 @@ chosen:
 7. Test with each actual target host.
 8. If MCP OAuth is selected, verify login, scope step-up, reconnect/refresh
    after token expiry, revoke/re-auth, and registration behavior with each
-   target host.
+   target host. Prove the auth surface with exact assertions, not a successful
+   login: the full `WWW-Authenticate` value, whole metadata documents, each CORS
+   header individually including the absence of allow-credentials, fixed error
+   strings, code burn on a wrong verifier, and revocation actually stopping
+   service. Red-proof those tests against the pre-change source. See
+   `references/authorization-server.md`.
 9. If supporting both eras, run the same functional tests against modern and
    legacy connections and assert that their transport behaviors stay separate.
 10. For mutating tools, simulate a response stream failing after the operation
@@ -321,9 +351,18 @@ Before calling a modern server ready:
       server-initiated JSON-RPC requests on the modern path.
 - [ ] Auth precedes private data and mutations; MCP auth is separate from
       upstream-service auth.
+- [ ] Multiple credential shapes are discriminated by prefix with no
+      fallthrough; a claimed-but-invalid bearer is 401, never anonymous.
 - [ ] If MCP OAuth is selected, Protected Resource Metadata,
       authorization-server discovery, `resource` audience binding, PKCE,
       issuer validation, and client registration behavior are tested.
+- [ ] If the server runs its own authorization server: CORS is on the metadata
+      documents, registration, and token, and on nothing else; no endpoint sends
+      `Access-Control-Allow-Credentials`; consent is shown per client and
+      remembered; revocation stops service and clears warm authorization codes.
+- [ ] The credential lane the deployment serves is set in production, not only
+      in staging, and the setup guide the server publishes matches it.
+- [ ] No protocol version is hardcoded in product code.
 - [ ] Tool/resource/prompt schemas reject invalid input and external `$ref`
       fetching is disabled by default.
 - [ ] Tools include useful names, titles, descriptions, schemas, and accurate
