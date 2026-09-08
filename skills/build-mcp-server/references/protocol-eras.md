@@ -113,8 +113,8 @@ logging, and application-specific invalidation for configured paths.
 Successful `server/discover`, `tools/list`, `prompts/list`, `resources/list`,
 `resources/templates/list`, and `resources/read` results require:
 
-- `ttlMs` — a non-negative freshness hint in milliseconds
-- `cacheScope` — `public` or `private`
+- `ttlMs`: a non-negative freshness hint in milliseconds
+- `cacheScope`: `public` or `private`
 
 Use `private` whenever a result depends on caller identity or authorization.
 List pages are cached independently, and a change notification invalidates the
@@ -153,12 +153,12 @@ copying credentials, tool payloads, or private content into spans.
 
 New `2026-07-28` servers should not adopt:
 
-- Roots — pass paths/resources through arguments, URIs, or configuration.
-- Sampling — call an LLM provider directly from the server.
-- MCP Logging — use stderr for stdio and OpenTelemetry for observability.
-- Dynamic Client Registration — prefer Client ID Metadata Documents; keep DCR
+- Roots: pass paths/resources through arguments, URIs, or configuration.
+- Sampling: call an LLM provider directly from the server.
+- MCP Logging: use stderr for stdio and OpenTelemetry for observability.
+- Dynamic Client Registration: prefer Client ID Metadata Documents; keep DCR
   only as a tested compatibility fallback.
-- HTTP+SSE — use Streamable HTTP.
+- HTTP+SSE: use Streamable HTTP.
 
 Tasks moved out of core into the `io.modelcontextprotocol/tasks` extension.
 Extensions are negotiated through the `extensions` maps in client/server

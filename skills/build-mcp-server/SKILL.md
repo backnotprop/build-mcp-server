@@ -1,6 +1,6 @@
 ---
 name: build-mcp-server
-description: Design, scaffold, audit, and upgrade Model Context Protocol servers. Use when the user asks to build or migrate an MCP server, adopt MCP 2026-07-28, add dual-era support, create an MCP integration, expose an API or data source through MCP tools/resources/prompts, or choose an MCP transport/auth/deployment shape.
+description: Design, scaffold, audit, and upgrade Model Context Protocol servers. Use when the user asks to build or migrate an MCP server, adopt MCP 2026-07-28, add dual-era support, create an MCP integration, expose an API or data source through MCP tools/resources/prompts, add OAuth or API-key auth to an MCP endpoint, run an authorization server for it, support browser-hosted MCP clients, or choose an MCP transport/auth/deployment shape.
 ---
 
 # Build an MCP Server
@@ -44,7 +44,7 @@ Two standing rules for this work:
 
 ---
 
-## Phase 1 — Interrogate the use case
+## Phase 1: Interrogate the use case
 
 Answer these questions before scaffolding. If the request already answers them,
 state the inferred choices and proceed.
@@ -135,7 +135,7 @@ integrity-protected `requestState` bound to the caller, operation, and expiry.
 
 ---
 
-## Phase 2 — Recommend a server shape
+## Phase 2: Recommend a server shape
 
 Recommend one primary path and name any compatibility path separately.
 
@@ -213,7 +213,7 @@ legacy handler rather than session state inside the modern per-request factory.
 
 ---
 
-## Phase 3 — Pick a tool design pattern
+## Phase 3: Pick a tool design pattern
 
 Tool schemas and descriptions are runtime contracts visible to models and hosts.
 Keep them precise, small, and stable.
@@ -223,10 +223,10 @@ Keep them precise, small, and stable.
 Use for small surfaces.
 
 ```text
-create_issue    — Create a new issue. Params: title, body, labels[]
-update_issue    — Update an issue. Params: id, title?, body?, state?
-search_issues   — Search issues. Params: query, limit?
-add_comment     — Add a comment. Params: issue_id, body
+create_issue:    Create a new issue. Params: title, body, labels[]
+update_issue:    Update an issue. Params: id, title?, body?, state?
+search_issues:   Search issues. Params: query, limit?
+add_comment:     Add a comment. Params: issue_id, body
 ```
 
 ### Pattern B: discover + execute
@@ -234,8 +234,8 @@ add_comment     — Add a comment. Params: issue_id, body
 Use selectively for very large API surfaces.
 
 ```text
-search_actions  — Return matching actions with IDs, descriptions, safety, and schemas.
-execute_action  — Execute one action by ID with validated parameters.
+search_actions:  Return matching actions with IDs, descriptions, safety, and schemas.
+execute_action:  Execute one action by ID with validated parameters.
 ```
 
 The server owns the full catalog. Never hide whether the selected action is a
@@ -246,7 +246,7 @@ See `references/tool-design.md`.
 
 ---
 
-## Phase 4 — Pick an implementation stack
+## Phase 4: Pick an implementation stack
 
 Prefer the user's existing stack only if it supports the target protocol era.
 Framework familiarity does not compensate for an incompatible wire protocol.
@@ -263,7 +263,7 @@ mix v1 and v2 imports. See `references/versions.md`.
 
 ---
 
-## Phase 5 — Scaffold and verify
+## Phase 5: Scaffold and verify
 
 Once protocol era, deployment, primitives, framework, and authorization are
 chosen:
@@ -321,10 +321,12 @@ chosen:
 | Subscriptions | Client                                | Opt in to list/resource change notifications                       |
 | Extensions    | Negotiated client/server capabilities | Optional features such as MCP Apps or Tasks                        |
 
-Roots, Sampling, Logging, Dynamic Client Registration, and HTTP+SSE are
-deprecated in `2026-07-28`. They remain available only for compatibility during
-their deprecation windows; new servers should use their documented migration
-paths. See `references/server-capabilities.md`.
+Roots, Sampling, Logging, and Dynamic Client Registration were deprecated in
+`2026-07-28`. HTTP+SSE has been deprecated since `2025-03-26` and is now carried
+in the same registry. All remain available only for compatibility during their
+deprecation windows; new servers should use their documented migration paths.
+Client ID Metadata Documents are DCR's migration path. See
+`references/server-capabilities.md`.
 
 ---
 

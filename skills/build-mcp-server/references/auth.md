@@ -302,7 +302,7 @@ core-SDK auth examples with v2 imports.
 - [ ] Serve CORS on the metadata documents (and on registration and token if you
       run the AS), and on nothing else.
 - [ ] Keep MCP authorization separate from upstream credentials.
-- [ ] Validate token issuer, audience/resource, expiry, and scopes—not only its signature.
+- [ ] Validate token issuer, audience/resource, expiry, and scopes, not only its signature.
 - [ ] Partition every read, write, cache, and state handle by the verified principal/tenant.
 - [ ] Publish and validate path-aware Protected Resource Metadata and AS metadata.
 - [ ] Test PKCE, `resource`, `iss`, 401, 403 scope step-up, and issuer changes.

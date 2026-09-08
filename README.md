@@ -10,6 +10,11 @@ and keeps compatibility with the initialization-based 2025 era explicit. Its
 default TypeScript scaffold uses the official v2 split packages, and its
 migration playbook covers modern-only and dual-era upgrades.
 
+Authorization is covered on both sides: the protected-resource half every MCP
+server needs, and the authorization-server half for teams that issue their own
+tokens, including CORS for browser-hosted clients, registration hardening,
+consent, revocation, and the assertions that prove the surface.
+
 This repo contains one skill: `build-mcp-server`.
 
 ## Install
@@ -41,5 +46,7 @@ skills/build-mcp-server/
     ├── protocol-eras.md
     ├── migrate-2026-07-28.md
     ├── remote-http-scaffold.md
+    ├── auth.md
+    ├── authorization-server.md
     └── ...
 ```
