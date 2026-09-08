@@ -35,6 +35,95 @@ For each target host, verify:
 - how it displays tool titles, descriptions, parameters, annotations, and
   server instructions
 
+## Client landscape
+
+Verified 2026-09-08. Config shapes change; re-check before quoting them to a
+user. What does not change is the split: a host that runs as a process handles
+OAuth itself and CORS never applies, while a host that runs in a page needs the
+CORS rules in `authorization-server.md` or it cannot connect at all.
+
+**Claude Code** takes the URL on the command line and authenticates separately:
+
+```bash
+claude mcp add --transport http example https://mcp.example.com/mcp
+```
+
+Then `/mcp` inside Claude Code runs the browser sign-in, and `claude mcp list`
+reports "Needs authentication" until it completes. `claude mcp add` also has
+`--header` for a static bearer token, `--client-id` for a pre-registered client,
+and `--callback-port` for a fixed loopback port when the server requires
+pre-registered redirect URIs. Without that flag the callback port is ephemeral,
+which is why loopback redirect URI matching has to ignore the port.
+
+**Cursor** and most other Streamable HTTP hosts take a JSON entry, in
+`~/.cursor/mcp.json` for Cursor:
+
+```json
+{ "mcpServers": { "example": { "url": "https://mcp.example.com/mcp" } } }
+```
+
+**Codex** takes TOML in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.example]
+url = "https://mcp.example.com/mcp"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+```
+
+It also accepts `bearer_token_env_var` for the API-key lane, and it appends its
+own query parameter to the loopback callback, which is the other reason
+redirect URI matching needs a narrow relaxation.
+
+**Desktop and CLI hosts** run as a process: they open a system browser, listen
+on loopback, and store the token locally. CORS is irrelevant to them, which is
+why an OAuth surface can look complete and still be unusable from a page.
+
+**Browser-hosted clients** make the same calls with `fetch` from an origin. They
+need CORS on the metadata documents, the registration endpoint, and the token
+endpoint, and they must not get it anywhere else.
+
+Two host behaviors worth designing around, because they are not obvious:
+
+- Hosts disagree about a missing `expires_in` in the token response. Some read
+  it as one hour and, with no refresh token, re-run the whole consent flow every
+  hour; others read it as never expiring. Always send the real value.
+- At least one host validates the dynamic registration response strictly and
+  rejects `null` where a string is expected, before the browser ever opens. Omit
+  absent optional fields rather than emitting `null`.
+
+## The setup guide is the interface
+
+If your server publishes a setup document that agents fetch, that document is
+your onboarding product. **Whatever text the guide prints is what every agent
+does.** One team shipped the full browser flow and left the guide printing a
+`--header "Authorization: Bearer ..."` command; every agent that read the guide
+pasted a long-lived key into a client that could have signed the human in
+instead.
+
+Structure it so the default is the one you want:
+
+1. Lead with a plain statement that browser sign-in is the normal setup and that
+   nothing is pasted.
+2. Then per-host: the add command or config entry with **no credential**, and the
+   host's own authenticate step.
+3. Then say what the flow mints, who owns it, and where to revoke it.
+4. Then, under a heading that names it as the fallback, the API-key form for
+   scripts, CI, and clients that cannot finish the browser flow.
+
+Make the credential lane a single flag that both the code and the guide read, so
+a deployment cannot advertise a flow it does not serve. When no OAuth lane is
+configured, the guide should say so honestly and describe the API-key path,
+rather than printing a flow that answers 404.
+
+Publish it where agents look. One team found four agents working a deployment
+cold and none of them found the guide; adding `/llms.txt` alongside it fixed
+that, because `/llms.txt` is the path agents actually probe.
+
+Documentation drift here is a defect, not a chore. A guide that still documents
+a removed login command, or a tool count that no longer matches the registered
+tools, is wrong in the same way a broken route is wrong, and agents act on it.
+
 ## Protocol-era compatibility
 
 Test the modern path independently:
@@ -101,6 +190,14 @@ If supporting DCR compatibility:
 Normalize every registration mechanism into one internal client-policy record
 so authorization and consent do not depend on how the client registered.
 
+Registration is an unauthenticated write endpoint if you host it. Rate limit,
+bound, and evict it as described in `authorization-server.md`.
+
+Match redirect URIs byte for byte, with at most the loopback relaxation that
+real hosts need: ignore the port when both sides are loopback `http`, and allow
+an added query string when the registered URI has none. Never extend that to
+`https`, private-use schemes, or non-loopback hosts.
+
 ## Refresh, reconnect, and scope step-up
 
 Do not stop after the first successful browser login.
@@ -157,3 +254,8 @@ For every target host/version:
   rejected without opening SSE
 - access-token expiry, refresh, scope step-up, revoke, and re-auth work
 - closed-system bearer fallback works separately, if supported
+- a browser-hosted client can read the metadata documents and reach the
+  registration and token endpoints, and cannot reach authorize, consent, revoke,
+  or the MCP endpoint cross-origin
+- the setup guide the server publishes leads with the flow you want used, and
+  matches the credential lane the deployment actually serves
